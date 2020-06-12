@@ -7,12 +7,13 @@ import glob
 from scipy.signal import hilbert
 from obspy.signal.cross_correlation import correlate, xcorr_max
 import matplotlib.pyplot as plt
-
-
 import matplotlib as mpl
+#import subprocess
+#subprocess.check_call(["latex"])
+
 mpl.rc('font',family='serif')
 mpl.rc('font',serif='Times') 
-mpl.rc('text', usetex=True)
+#mpl.rc('text', usetex=True)
 mpl.rc('font',size=18)
 
 def get_fb(tidetype):
@@ -155,14 +156,21 @@ def get_syns_data(net, sta, loc, stime, etime, srate, tidetype, comps):
     stCorr = spotlme(coord['latitude'], coord['longitude'], coord['elevation'], True, stime, etime, srate)
     for chan in ['Z', 'N', 'E']:
         trT = stCorr.select(component = chan)[0]
-        #print(trT)
+        trHar = st.select(component = chan)[0]
+        if trT.stats.npts > trHar.stats.npts:
+            trT.data = trT.data[:trHat.stats.npts]
+        if trT.stats.npts < trHar.stats.npts:
+            trHar.data = trHar.data[:trT.stats.npts]
+
         #print(st.select(component = chan)[0])
-        trT.data += st.select(component = chan)[0].data[:]
+
+        trT.data += trHar
         st += trT
     # Remove all non-load corrected synthetics
     for tr in st.select(network="YY"):
         st.remove(tr)
     st.detrend('constant')
+
     # Remove fake response to avoid processing artifacts in the synthetics
     paz = {'zeros': [0. -1.j], 'poles': [0. -1.j], 'sensitivity': 1., 'gain': 1.}
     st.simulate(paz_remove=paz, taper=False)
@@ -171,12 +179,13 @@ def get_syns_data(net, sta, loc, stime, etime, srate, tidetype, comps):
     st_data.merge(fill_value=0.)
     st_data.remove_response(inv, 'ACC', taper=False)
     for tr in st_data:
+        print(tr)
         tr.data *= 10**8
     if comps != 'LHZ':
+        print("comp != LHZ",comp)
         st_data.rotate('->ZNE', inventory=inv)
     st += st_data
     return st
-
 def proc_tides(ctime, net, sta, loc):
     # Helper function for windowing and calculation
     stime = ctime -5*24*60*60
@@ -191,7 +200,6 @@ def proc_tides(ctime, net, sta, loc):
     # we now have everything and can do the calulation
     #st.trim(ctime-5*24*60*60, ctime + 6*24*60*60)
     st2 = st.select(component='Z')
-
     cc = correlate(st2[0].data, st2[1].data, 1000)
     shift, val = xcorr_max(cc)
     ptp = np.ptp(st2[0].data)
@@ -200,21 +208,21 @@ def proc_tides(ctime, net, sta, loc):
 
 net, sta, loc = 'IU', 'ANMO', '00'
 
-#f = open(net +'_' + sta +'_' + loc +'results','w')
-#f.write('Phase Shift, Correlation, ptp-data, ptp-synthetic, DOY, Year\n')
+f = open(net +'_' + sta +'_' + loc +'results','w')
+f.write('Phase Shift, Correlation, ptp-data, ptp-synthetic, DOY, Year\n')
 
 ctime = UTCDateTime('2019-001T00:00:00')
 etime = UTCDateTime('2020T001T00:00:00')
 
-# while ctime <= etime:
-#     try:
-#         shift, val, ptp, ptp2, st2  = proc_tides(ctime, net, sta, loc)
-#         print(str(shift) + ' ' + str(val))
-#         #f.write(str(shift) +', ' + str(val) + ', ' + str(ptp) + ', ' + str(ptp2) + ', ' + 
-#         #        str(ctime.julday) + ', ' + str(ctime.year) + '\n')
-#     except:
-#         print('problem')
-#     ctime += 24*60*60
+while ctime <= etime:
+     try:
+         shift, val, ptp, ptp2, st2  = proc_tides(ctime, net, sta, loc)
+         print(str(shift) + ' ' + str(val))
+         f.write(str(shift) +', ' + str(val) + ', ' + str(ptp) + ', ' + str(ptp2) + ', ' + 
+                 str(ctime.julday) + ', ' + str(ctime.year) + '\n')
+     except:
+         print('problem')
+     ctime += 24*60*60
 
 def mktime_series(D, psi, lon, lat, t):
     # eqn 1 of Ray et al. (2001)
@@ -222,6 +230,7 @@ def mktime_series(D, psi, lon, lat, t):
     lon *= np.pi/180.
     w = 2.*np.pi/(12.*60.*60. + 25.*60.)
     zeta = -D*np.cos(w*t + 2*phi - psi)*3*np.sin(lon)**2
+    print("pass mktime")
     return zeta
 
 
@@ -230,17 +239,15 @@ def mktime_series(D, psi, lon, lat, t):
 
 
 shift, val, ptp, ptp2, st2  = proc_tides(ctime, net, sta, loc)
+print(shift, val, ptp, ptp2, st2)
 
 
-
-
-
-
-
-fig = plt.figure(1)
+fig=plt.figure(1)
 for idx, comp in enumerate(['Z']):
+    print("idx, comp=",idx,comp)
     for idx, tr in enumerate(st2):
         plt.plot(tr.times()/(24*60*60),tr.data, label=tr.id + ' ' + str(shift) + ' s')
+        #plt.plot(tr.times()/(24*60*60),tr.data)
         zeta = mktime_series(20, 0.,-106.4572, 34.94591,tr.times() )
         plt.plot(tr.times()/(24*60*60), zeta, label='Harmonic')
     plt.xlim((min(tr.times()/(24*60*60)),max(tr.times()/(24*60*60))))
